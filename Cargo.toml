@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2021"
 authors = ["ryzeon-dev"]
 repository = "https://github.com/ryzeon-dev/ezark"
-license = "AGPL-3"
+license = "AGPL-3.0-or-later"
 description = "Open source archive utility written in Rust"
 readme = "README.md"
 
