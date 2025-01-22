@@ -1,0 +1,7 @@
+[package]
+name = "ezark"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rsjson = "0.5.1"
