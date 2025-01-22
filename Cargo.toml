@@ -1,7 +1,12 @@
 [package]
 name = "ezark"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
+authors = ["ryzeon-dev"]
+repository = "https://github.com/ryzeon-dev/ezark"
+license = "AGPL-3"
+description = "Open source archive utility written in Rust"
+readme = "README.md"
 
 [dependencies]
 rsjson = "0.5.1"
