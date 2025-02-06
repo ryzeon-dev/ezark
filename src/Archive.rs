@@ -1,3 +1,5 @@
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::ops::Add;
 use std::path::Path;
 use rsjson::{Json, Node, NodeContent};
@@ -6,8 +8,8 @@ pub fn makeArchive(elements: Vec<String>, archiveName: String, verbose: bool) {
     let mutex = std::sync::Mutex::<Vec<String>>::new(Vec::new());
     let checked = std::sync::Arc::<std::sync::Mutex<Vec<String>>>::new(mutex);
 
-    let archiveBytesMutex = std::sync::Mutex::new(Vec::<u8>::new());
-    let archiveBytesArc = std::sync::Arc::new(archiveBytesMutex);
+    let fileListMutex = std::sync::Mutex::new(Vec::<String>::new());
+    let fileListArc = std::sync::Arc::new(fileListMutex);
 
     let mut jsonMap = rsjson::Json::new();
     let mut archiveIndex: usize = 0;
@@ -23,7 +25,7 @@ pub fn makeArchive(elements: Vec<String>, archiveName: String, verbose: bool) {
         let name = elementPath.file_name().unwrap().to_str().unwrap().to_string();
         if elementPath.is_dir() {
 
-            let (jsonContent, newIndex) = dfs(element.clone(), checked.clone(), archiveIndex, archiveBytesArc.clone(), verbose);
+            let (jsonContent, newIndex) = dfs(element.clone(), checked.clone(), archiveIndex, fileListArc.clone(), verbose);
             archiveIndex = newIndex;
 
             jsonMap.addNode(Node::new(
@@ -35,18 +37,14 @@ pub fn makeArchive(elements: Vec<String>, archiveName: String, verbose: bool) {
                 println!("Mapping `{}` file", name);
             }
 
+            fileListArc.lock().unwrap().push(elementPath.to_str().unwrap().to_string());
+
             let fileBytes = match std::fs::read(elementPath) {
                 Err(_) => Vec::new(),
                 Ok(bytes) => bytes
             };
 
-            if verbose {
-                println!("Adding `{}` file to archive", name.clone());
-            }
-
             let fileSize = fileBytes.len();
-            archiveBytesArc.lock().unwrap().extend(fileBytes);
-
             let mut indexList = Vec::<NodeContent>::new();
             indexList.push(NodeContent::Int(archiveIndex));
 
@@ -65,24 +63,24 @@ pub fn makeArchive(elements: Vec<String>, archiveName: String, verbose: bool) {
 
     let mapSizeBytes = stringSizedJsonMap.len().to_string().bytes().collect::<Vec<u8>>();
     let mapBytes = stringSizedJsonMap.bytes().collect::<Vec<u8>>();
+    
+    if std::path::Path::new(&archiveName).exists() {
+        std::fs::remove_file(&archiveName);
+    }
+    
+    std::fs::write(&archiveName, []);
+    let mut archiveFile = OpenOptions::new().append(true).open(archiveName).expect("Error: unable to open destination file for writing");
 
-    let mut fileBytes = Vec::<u8>::new();
-    fileBytes.extend(mapSizeBytes);
-
-    fileBytes.extend(mapBytes);
-    fileBytes.extend(archiveBytesArc.lock().unwrap().to_owned());
-
-    match std::fs::write(archiveName.clone(), fileBytes) {
-        Err(_) => {
-            eprintln!("Error: cannot create file `{}`", archiveName);
-            std::process::exit(1);
-        },
-        Ok(_) => {}
+    archiveFile.write(&mapSizeBytes).expect("Error: cannot write to archive file");
+    archiveFile.write(&mapBytes).expect("Error: cannot write to archive file");
+    
+    for file in fileListArc.lock().unwrap().iter() {
+        archiveFile.write(&std::fs::read(file).expect(format!("Error: cannot read `{}` file", file).as_str())).expect("Error: cannot write to archive file");
     }
 }
 
 fn dfs(base: String, checked: std::sync::Arc<std::sync::Mutex<Vec<String>>>, currentIndex: usize,
-    archiveBytes: std::sync::Arc<std::sync::Mutex<Vec<u8>>>, verbose: bool) -> (rsjson::Json, usize) {
+    fileListArc: std::sync::Arc<std::sync::Mutex<Vec<String>>>, verbose: bool) -> (rsjson::Json, usize) {
     if checked.lock().unwrap().contains(&base) {
         return (rsjson::Json::new(), currentIndex);
     }
@@ -130,17 +128,19 @@ fn dfs(base: String, checked: std::sync::Arc<std::sync::Mutex<Vec<String>>>, cur
                 println!("Mapping `{}` file", stringPath.clone());
             }
 
-            let fileBytes = match std::fs::read(stringPath) {
+            let fileBytes = match std::fs::read(stringPath.clone()) {
                 Err(_) => Vec::new(),
                 Ok(bytes) => bytes
             };
+
+            fileListArc.lock().unwrap().push(stringPath);
 
             if verbose {
                 println!("Adding `{}/{}` file to archive", base, name.clone());
             }
 
             let fileSize = fileBytes.len();
-            archiveBytes.lock().unwrap().extend(fileBytes);
+            // archiveBytes.lock().unwrap().extend(fileBytes);
 
             let mut indexList = Vec::<NodeContent>::new();
             indexList.push(NodeContent::Int(archiveIndex));
@@ -155,7 +155,7 @@ fn dfs(base: String, checked: std::sync::Arc<std::sync::Mutex<Vec<String>>>, cur
 
 
         } else if path.is_dir() {
-            let (subContent, newIndex) = dfs(stringPath.clone(), checked.clone(), archiveIndex, archiveBytes.clone(), verbose);
+            let (subContent, newIndex) = dfs(stringPath.clone(), checked.clone(), archiveIndex, fileListArc.clone(), verbose);
             archiveIndex = newIndex;
 
             node.addNode(
@@ -173,86 +173,36 @@ fn dfs(base: String, checked: std::sync::Arc<std::sync::Mutex<Vec<String>>>, cur
     return (node, archiveIndex);
 }
 
-/*fn walkJson(jsonNode: Json, parent: String, currentIndex: usize, archiveBytes: std::sync::Arc<std::sync::Mutex<Vec<u8>>>, verbose: bool) -> (rsjson::Json, usize) {
-    let mut archiveIndex= currentIndex;
-    let mut newJson = Json::new();
-
-    for node in jsonNode.getAllNodes() {
-        match node.getContent() {
-
-            NodeContent::Null => {
-                let fileBytes = match std::fs::read(format!("{}/{}", parent, node.getLabel())) {
-                    Err(_) => Vec::new(),
-                    Ok(bytes) => bytes
-                };
-
-                if verbose {
-                    println!("Adding `{}/{}` file to archive", parent, node.getLabel());
-                }
-
-                let fileSize = fileBytes.len();
-                archiveBytes.lock().unwrap().extend(fileBytes);
-
-                let mut indexList = Vec::<NodeContent>::new();
-                indexList.push(NodeContent::Int(archiveIndex));
-
-                indexList.push(NodeContent::Int(archiveIndex + fileSize));
-                archiveIndex += fileSize;
-
-                newJson.addNode(Node::new(
-                    node.getLabel(),
-                    NodeContent::List(indexList)
-                ));
-            },
-
-            NodeContent::Json(jnode) => {
-                let (newSubNode, newIndex) = walkJson(jnode, node.getLabel(), archiveIndex, archiveBytes.clone(), verbose.clone());
-                archiveIndex = newIndex;
-
-                newJson.addNode(Node::new(
-                    node.getLabel(),
-                    NodeContent::Json(newSubNode)
-                ));
-            },
-
-            _ => {}
-        }
+fn makeSizedBuffer(size: usize) -> Vec<u8> {
+    let mut buffer = Vec::<u8>::new();
+    
+    for _ in 0..size {
+        buffer.push(0);
     }
+    
+    return buffer;
+}
 
-    return (newJson, archiveIndex);
-}*/
-
-fn extractMap(archiveBytes: Vec<u8>) -> (usize, rsjson::Json){
-    let mut jsonSizeBytes = Vec::new();
-    let mut index: usize = 0;
-
-    while index < archiveBytes.len() {
-        let byte = archiveBytes.get(index).unwrap().to_owned();
-
-        if byte == 123 {
-            break
-        }
-
-        jsonSizeBytes.push(byte);
-        index += 1;
-    }
-
+fn extractMap(archiveBytes: &mut BufReader<File>) -> (usize, rsjson::Json){
+    let mut buffer = Vec::<u8>::new();
+    
+    let index = archiveBytes.read_until(123, &mut buffer).unwrap();
+    let mut jsonSizeBytes = buffer;
+    
+    archiveBytes.seek(SeekFrom::Start((index as u64) - 1));
+    jsonSizeBytes.remove(jsonSizeBytes.len() - 1);
+    
     let size = String::from_utf8(jsonSizeBytes).unwrap().parse::<usize>().unwrap();
-    let jsonBytes = archiveBytes.get(index..index+size).unwrap().to_vec();
-    return (index, rsjson::Json::fromString(String::from_utf8(jsonBytes).unwrap()).unwrap());
+    let mut jsonBytes = makeSizedBuffer(size);
+    
+    archiveBytes.read_exact(&mut jsonBytes);
+    return (index, rsjson::Json::fromString(String::from_utf8(jsonBytes.to_vec()).unwrap()).unwrap());
 }
 
 pub fn checkArchive(archivePath: String) {
-    let archiveBytes = match std::fs::read(archivePath) {
-        Err(_) => {
-            eprintln!("Error: cannot read archive");
-            std::process::exit(1);
-        },
+    let mut fileBuffer = BufReader::new(File::open(archivePath).expect("Error: cannot read archive file"));
 
-        Ok(bytes) => bytes
-    };
-
-    let (_, archiveMap) = extractMap(archiveBytes);
+    let (_, archiveMap) = extractMap(&mut fileBuffer);
     for node in archiveMap.getAllNodes() {
         printArchiveTree(node, 0);
     }
@@ -285,47 +235,16 @@ pub fn printArchiveTree(node: Node, indent: usize) {
 }
 
 pub fn extractArchive(archivePath: String, extractionPath: String, verbose: bool) {
-    let archiveBytes = match std::fs::read(archivePath) {
-        Err(_) => {
-            eprintln!("Error: cannot read archive");
-            std::process::exit(1);
-        },
+    let mut fileBuffer = BufReader::new(File::open(archivePath).expect("Error: cannot read archive file"));
+    let (_, jsonMap) = extractMap(&mut fileBuffer);
 
-        Ok(bytes) => bytes
-    };
-
-    /*let mut jsonSizeBytes = Vec::new();
-    let mut index: usize = 0;
-
-    while index < archiveBytes.len() {
-        let byte = archiveBytes.get(index).unwrap().to_owned();
-
-        if byte == 123 {
-            break
-        }
-
-        jsonSizeBytes.push(byte);
-        index += 1;
-    }
-
-    if verbose {
-        println!("Extracting archive map");
-    }
-
-    let size = String::from_utf8(jsonSizeBytes).unwrap().parse::<usize>().unwrap();
-    let jsonBytes = archiveBytes.get(index..index+size).unwrap().to_vec();
-    let jsonMap = rsjson::Json::fromString(String::from_utf8(jsonBytes).unwrap()).unwrap();*/
-
-    let (index, jsonMap) = extractMap(archiveBytes.clone());
-
-    let archive = archiveBytes.get(index..archiveBytes.len()).unwrap().to_vec();
-    let archiveMutex = std::sync::Mutex::new(archive);
+    let archiveMutex = std::sync::Mutex::new(fileBuffer);
     let archiveArc = std::sync::Arc::new(archiveMutex);
-
+    
     extractAndCreate(extractionPath, jsonMap, archiveArc.clone(), verbose);
 }
 
-fn extractAndCreate(basePath: String, nodes: Json, archive: std::sync::Arc<std::sync::Mutex<Vec<u8>>>, verbose: bool) {
+fn extractAndCreate(basePath: String, nodes: Json, archive: std::sync::Arc<std::sync::Mutex<BufReader<File>>>, verbose: bool) {
     if !std::path::Path::new(&basePath).exists() {
         match std::fs::create_dir(basePath.clone()) {
             Err(_) => {
@@ -348,8 +267,8 @@ fn extractAndCreate(basePath: String, nodes: Json, archive: std::sync::Arc<std::
                 let startByte = list.get(0).unwrap().toUsize().unwrap();
                 let endByte = list.get(1).unwrap().toUsize().unwrap();
 
-                let unlockedArchive = archive.lock().unwrap();
-                let fileBytes = unlockedArchive.get(startByte..endByte).unwrap();
+                let mut fileBytes = makeSizedBuffer(endByte - startByte);
+                archive.lock().unwrap().read_exact(&mut fileBytes);
 
                 if verbose {
                     println!("Extracting `{basePath}/{label}` file");

@@ -1,10 +1,10 @@
-#![allow(non_snake_case)]
+#![allow(non_snake_case, unused_must_use)]
 use crate::Archive::{checkArchive, extractArchive, makeArchive};
 
 mod Args;
 mod Archive;
 
-const VERSION: &str = "1.0.0";
+const VERSION: &str = "1.1.0";
 
 fn main() {
     let mut stdargs = std::env::args().collect::<Vec<String>>();

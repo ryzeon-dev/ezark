@@ -1,6 +1,6 @@
 [package]
 name = "ezark"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 authors = ["ryzeon-dev"]
 repository = "https://github.com/ryzeon-dev/ezark"
